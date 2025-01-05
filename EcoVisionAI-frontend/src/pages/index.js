@@ -5,7 +5,11 @@ export default function DashboardPage() {
         <div className="bg-gradient-to-br from-gray-800 via-gray-900 to-black min-h-screen flex flex-col text-white">
             {/* Header Section */}
             <header className="flex items-center justify-between w-full px-6 py-4 bg-gray-900 shadow-lg">
-                <h1 className="text-2xl font-bold">CommuneVerse Dashboard</h1>
+                <div>
+                    <h2 className="text-2xl font-bold">This is only my sample Dashboard Preview</h2>
+                    <br />
+                    <h1 className="text-2xl font-bold">CommuneVerse Dashboard</h1>
+                </div>
                 <button
                     onClick={() => (window.location.href = "/logout")}
                     className="bg-red-500 text-white px-4 py-2 rounded-lg shadow-md hover:bg-red-700 transition"
