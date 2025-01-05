@@ -1,4 +1,4 @@
-```markdown
+
 # Green Finance Optimization Platform Backend
 
 This is the backend for the **Green Finance Optimization Platform**, built using Node.js, Express, MySQL, and OpenAI's GPT API. It provides RESTful APIs for project management, ESG scoring, resource optimization, and AI-powered insights.
