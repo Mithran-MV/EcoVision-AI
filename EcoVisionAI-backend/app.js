@@ -31,169 +31,127 @@ const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
 });
 
-// Add a New User
-app.post("/users", (req, res) => {
-    const { name, email, location, preferences } = req.body;
-    const query = `INSERT INTO users (name, email, location, preferences) VALUES (?, ?, ?, ?)`;
-    db.query(query, [name, email, location, JSON.stringify(preferences)], (err, results) => {
+// Add a New Project
+app.post("/projects", (req, res) => {
+    const { name, description, location, budget, esgMetrics } = req.body;
+    const query = `INSERT INTO projects (name, description, location, budget, esg_metrics) VALUES (?, ?, ?, ?, ?)`;
+    db.query(query, [name, description, location, budget, JSON.stringify(esgMetrics)], (err, results) => {
         if (err) {
-            res.status(500).json({ error: "Error adding user", details: err });
+            res.status(500).json({ error: "Error adding project", details: err });
         } else {
-            res.status(201).json({ message: "User added successfully", userId: results.insertId });
+            res.status(201).json({ message: "Project added successfully", projectId: results.insertId });
         }
     });
 });
 
-// Fetch All Events
-app.get("/events", (req, res) => {
-    const { location, category } = req.query;
-    const query = `SELECT * FROM events WHERE location = ? OR (category = ? OR ? IS NULL)`;
-    db.query(query, [location, category, category], (err, results) => {
+// Fetch All Projects
+app.get("/projects", (req, res) => {
+    const { location } = req.query;
+    const query = `SELECT * FROM projects WHERE location = ? OR ? IS NULL`;
+    db.query(query, [location, location], (err, results) => {
         if (err) {
-            res.status(500).json({ error: "Error fetching events", details: err });
+            res.status(500).json({ error: "Error fetching projects", details: err });
         } else {
             res.json(results);
         }
     });
 });
 
-// Fetch Single Event by ID
-app.get("/events/:id", (req, res) => {
+// Calculate ESG Score for a Project
+app.post("/projects/:id/esg-score", async (req, res) => {
     const { id } = req.params;
-    const query = `SELECT * FROM events WHERE id = ?`;
-    db.query(query, [id], (err, results) => {
+    const { description, esgMetrics } = req.body;
+
+    try {
+        const prompt = `
+            You are an AI expert in sustainability. Calculate the ESG score based on the provided project description:
+            "${description}" and ESG metrics: ${JSON.stringify(esgMetrics)}.
+            Assign a score between 0 and 100.
+        `;
+        const gptResponse = await openai.chat.completions.create({
+            model: "gpt-3.5-turbo",
+            messages: [
+                { role: "system", content: "You are an ESG scoring assistant." },
+                { role: "user", content: prompt },
+            ],
+            max_tokens: 50,
+            temperature: 0.7,
+        });
+
+        const esgScore = gptResponse?.choices?.[0]?.message?.content?.trim() || "50";
+
+        const updateQuery = `UPDATE projects SET esg_score = ? WHERE id = ?`;
+        db.query(updateQuery, [esgScore, id], (err) => {
+            if (err) {
+                res.status(500).json({ error: "Error updating ESG score", details: err });
+            } else {
+                res.json({ message: "ESG score calculated successfully", esgScore });
+            }
+        });
+    } catch (err) {
+        res.status(500).json({ error: "Error calculating ESG score", details: err.message });
+    }
+});
+
+// Optimize Resource Allocation
+app.post("/optimize", (req, res) => {
+    const { budget, riskTolerance } = req.body;
+
+    const query = `
+        SELECT id, name, esg_score, budget 
+        FROM projects 
+        WHERE budget <= ? 
+        ORDER BY esg_score DESC
+    `;
+    db.query(query, [budget], (err, results) => {
         if (err) {
-            res.status(500).json({ error: "Error fetching event details", details: err });
-        } else if (results.length === 0) {
-            res.status(404).json({ error: "Event not found" });
+            res.status(500).json({ error: "Error optimizing resources", details: err });
         } else {
-            res.json(results[0]);
+            const optimizedProjects = [];
+            let remainingBudget = budget;
+
+            results.forEach((project) => {
+                if (project.budget <= remainingBudget) {
+                    optimizedProjects.push(project);
+                    remainingBudget -= project.budget;
+                }
+            });
+
+            res.json({
+                optimizedProjects,
+                remainingBudget,
+                message: "Resource allocation optimized successfully",
+            });
         }
     });
 });
 
-// Chat with GPT for Event Suggestions\
-
+// Chat with GPT for Project Insights
 app.post("/chat", async (req, res) => {
-    const { userId, query } = req.body;
+    const { query } = req.body;
+
+    const prompt = `
+        You are an AI sustainability assistant. Based on the user's query "${query}", provide insights or suggestions related to green finance investments.
+    `;
 
     try {
-        // Step 1: Fetch user details from the database
-        const userQuery = `
-            SELECT preferences, location FROM users WHERE id = ? LIMIT 1
-        `;
-        db.query(userQuery, [userId], (err, results) => {
-            if (err || results.length === 0) {
-                res.status(404).json({ error: "User not found" });
-                return;
-            }
-
-            const { preferences, location } = results[0];
-            let userPreferences = [];
-
-            // Parse user preferences into an array
-            if (typeof preferences === "string") {
-                userPreferences = preferences.split(",").map((pref) => pref.trim());
-            } else if (Array.isArray(preferences)) {
-                userPreferences = preferences;
-            }
-
-            // Step 2: Query the database for matching events
-            const eventQuery = `
-                SELECT title, date, location, description, img_url
-                FROM events
-                WHERE location = ? AND (category IN (?) OR ? IS NULL)
-                ORDER BY date ASC
-            `;
-            db.query(
-                eventQuery,
-                [location, userPreferences, userPreferences.length > 0 ? null : null],
-                async (eventErr, eventResults) => {
-                    if (eventErr) {
-                        res.status(500).json({
-                            error: "Error fetching events from database",
-                            details: eventErr,
-                        });
-                        return;
-                    }
-
-                    // Step 3: Generate a friendly conversational message using GPT
-                    const prompt = `
-                        You are a friendly event assistant. Based on the user's query "${query}" and their preferences for ${userPreferences.join(
-                        ", "
-                    )}, create a friendly conversational introduction for the user. The message should only summarize and not include event details.
-                    `;
-
-                    try {
-                        const gptResponse = await openai.chat.completions.create({
-                            model: "gpt-3.5-turbo",
-                            messages: [
-                                { role: "system", content: "You are a helpful assistant." },
-                                { role: "user", content: prompt },
-                            ],
-                            max_tokens: 100,
-                            temperature: 0.7,
-                        });
-
-                        const message =
-                            gptResponse?.choices?.[0]?.message?.content ||
-                            "Hey there! 👋 Based on your query, here are some exciting events happening in Chennai that you might love.";
-
-                        // Step 4: Format event details as `res_event`
-                        const resEvent = {};
-                        eventResults.forEach((event, index) => {
-                            resEvent[index + 1] = {
-                                title: event.title,
-                                date: event.date,
-                                location: event.location,
-                                description: event.description,
-                                img_url: event.img_url,
-                            };
-                        });
-
-                        // Format final response
-                        const response = {
-                            message,
-                            res_event: resEvent,
-                        };
-
-                        // Log the interaction into the database
-                        const logQuery = `
-                            INSERT INTO interactions (user_id, query, response)
-                            VALUES (?, ?, ?)
-                        `;
-                        db.query(
-                            logQuery,
-                            [userId, query, JSON.stringify(response)],
-                            (logErr) => {
-                                if (logErr) {
-                                    console.error(
-                                        "Error logging interaction into database:",
-                                        logErr
-                                    );
-                                }
-                            }
-                        );
-
-                        // Send the response back to the user
-                        res.json(response);
-                    } catch (gptError) {
-                        console.error("Error generating message using GPT:", gptError);
-                        res.status(500).json({
-                            error: "Error generating message using GPT",
-                            details: gptError.message,
-                        });
-                    }
-                }
-            );
+        const gptResponse = await openai.chat.completions.create({
+            model: "gpt-3.5-turbo",
+            messages: [
+                { role: "system", content: "You are a helpful assistant for green finance optimization." },
+                { role: "user", content: prompt },
+            ],
+            max_tokens: 100,
+            temperature: 0.7,
         });
+
+        const message = gptResponse?.choices?.[0]?.message?.content || "I couldn't find any relevant suggestions.";
+
+        res.json({ message });
     } catch (err) {
-        res.status(500).json({ error: "Error processing chat request", details: err });
+        res.status(500).json({ error: "Error generating GPT response", details: err.message });
     }
 });
-
-
-
 
 // Start the Server
 const PORT = 3000;
